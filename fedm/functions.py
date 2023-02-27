@@ -248,6 +248,11 @@ def weak_form_balance_equation(
     r: float = 0.5 / df.pi,
     D: Optional[df.Function] = None,  # get by indexing result of df.Function_definition
     log_representation: bool = False,
+    is_theta_scheme: bool = False,
+    theta: Optional[float] = 0.5,
+    Gamma_old: Optional[df.Function] = None,  # obtain by indexing result of df.Function_definition
+    h: Optional[float] = 1.0,  # obtain by indexing result of df.Function_definition
+
 ) -> df.Form:
     """
     Returns the weak form of the particle balance equations.
@@ -343,24 +348,39 @@ def weak_form_balance_equation(
             "fedm.weak_form_balance_equation_log_representation: When 'equation_type' "
             "is diffusion-reaction, must also supply the diffusion coefficient 'D'."
         )
-    # tr = timestep_ratio
-    tr = dt / dt_old
-    trp1 = 1.0 + tr
-    tr2p1 = 1.0 + 2.0 * tr
+    
     # If logarithmic, we include a factor of exp(u) in the integral
     expu_or_1 = df.exp(u) if log_representation else 1.0
-    # Standard part
-    u_part = (u * tr2p1 - trp1**2.0 * u_old + tr**2.0 * u_old1) / trp1
+    
+    if is_theta_scheme:
+        # Standard part
+        u_part = (u - u_old)    
+    else:
+        # tr = timestep_ratio
+        tr = dt / dt_old
+        trp1 = 1.0 + tr
+        tr2p1 = 1.0 + 2.0 * tr
+        # Standard part
+        u_part = (u * tr2p1 - trp1**2.0 * u_old + tr**2.0 * u_old1) / trp1
+    
     time_derivative = 2.0 * df.pi * (expu_or_1 * u_part * v / dt) * r * dx
+
     # Source terms
     source = 2.0 * df.pi * v * f * r * dx
+
     # Diffusion terms
     diffusion = 0.0
     if equation_type == "diffusion-reaction":
         expu_or_u = df.exp(u) if log_representation else u
-        diffusion = 2.0 * df.pi * df.dot(-df.grad(D * expu_or_u), df.grad(v)) * r * dx
+        diffusion = 2.0 * df.pi * theta * df.dot(-df.grad(D * expu_or_u), df.grad(v)) * r * dx
+        if is_theta_scheme & (theta < 1.):
+            expuold_or_uold = df.exp(uold) if log_representation else uold
+            diffusion += 2.0 * df.pi * (1 - theta) * df.dot(-df.grad(D * expuold_or_uold), df.grad(v)) * r * dx
     if equation_type == "drift-diffusion-reaction":
-        diffusion = 2.0 * df.pi * df.dot(Gamma, df.grad(v)) * r * dx
+        diffusion = theta * 2.0 * df.pi * df.dot(Gamma, df.grad(v)) * r * dx
+        if is_theta_scheme & (theta < 1.):
+            diffusion += 2.0 * df.pi * (1 - theta) * df.dot(Gamma_old, df.grad(v)) * r * dx
+
     # Return with integral bits
     return time_derivative - diffusion - source
 
