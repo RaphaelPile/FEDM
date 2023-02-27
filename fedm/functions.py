@@ -321,7 +321,16 @@ def weak_form_balance_equation(
         diffusion coefficient, only required for the diffusion equation.
     log_representation : bool, default False
         Use logarithmic representation.
-
+    is_theta_scheme : bool, default False
+        Use theta  time scheme
+    theta : float, default 0.5
+        Theta parameter value for corresponding time scheme
+    Gamma_old : df.Function, default None
+        Previous value of Gamma
+    Na: float, default 0.
+        First log stabilisation source term (useful when f = 0)
+    psi: float, default 0.01
+        Second log stabilisation source term (useful when f = 0) 
 
     Returns
     -------
