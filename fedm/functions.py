@@ -250,9 +250,9 @@ def weak_form_balance_equation(
     log_representation: bool = False,
     is_theta_scheme: bool = False,
     theta: Optional[float] = 0.5,
-    Gamma_old: Optional[df.Function] = None,  # obtain by indexing result of df.Function_definition
-    h: Optional[float] = 1.0,  # obtain by indexing result of df.Function_definition
-
+    Gamma_old: Optional[df.Function] = None,   
+    Na: Optional[float] = 0.,  
+    psi: Optional[float] = 0.01,  
 ) -> df.Form:
     """
     Returns the weak form of the particle balance equations.
@@ -322,6 +322,7 @@ def weak_form_balance_equation(
     log_representation : bool, default False
         Use logarithmic representation.
 
+
     Returns
     -------
     df.Form
@@ -367,6 +368,9 @@ def weak_form_balance_equation(
 
     # Source terms
     source = 2.0 * df.pi * v * f * r * dx
+
+    if log_representation:
+        source += 2.0 * df.pi * Na * df.exp(-psi *  u) * v * r * dx
 
     # Diffusion terms
     diffusion = 0.0
@@ -529,7 +533,7 @@ def weak_form_supg_balance_equation(
     diffusion = 0.0
     if equation_type == "diffusion-reaction":
         expu_or_u = df.exp(u) if log_representation else u
-        diffusion = 2.0 * df.pi *  * theta * df.div( D * df.grad(expu_or_u) ) * tauwgradv * r * dx
+        diffusion = 2.0 * df.pi * theta * df.div( D * df.grad(expu_or_u) ) * tauwgradv * r * dx
         if is_theta_scheme & (theta < 1.):
             expuold_or_uold = df.exp(uold) if log_representation else uold
             diffusion += 2.0 * df.pi * (1 - theta) * df.div(D * df.grad(expuold_or_uold) ) * tauwgradv * r * dx
