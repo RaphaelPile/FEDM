@@ -265,6 +265,9 @@ def weak_form_balance_equation(
     r: float = 0.5 / df.pi,
     D: Optional[df.Function] = None,  # get by indexing result of df.Function_definition
     log_representation: bool = False,
+    is_theta_scheme: bool = False,
+    theta: Optional[float] = 1.,
+    Gamma_old: Optional[df.Function] = None,   
     Na: Optional[float] = 0.,  
     psi: Optional[float] = 0.01,  
 ) -> df.Form:
@@ -335,6 +338,12 @@ def weak_form_balance_equation(
         diffusion coefficient, only required for the diffusion equation.
     log_representation : bool, default False
         Use logarithmic representation.
+    is_theta_scheme : bool, default False
+        Use theta  time scheme
+    theta : float, default 0.5
+        Theta parameter value for corresponding time scheme
+    Gamma_old : df.Function, default None
+        Previous value of Gamma
     Na: float, default 0.
         First log stabilisation source term (useful when f = 0)
     psi: float, default 0.01
@@ -367,23 +376,53 @@ def weak_form_balance_equation(
             "is diffusion-reaction, must also supply the diffusion coefficient 'D'."
         )
     
-    tr = dt / dt_old
-    trp1 = 1.0 + tr
-    tr2p1 = 1.0 + 2.0 * tr
-    # If logarithmic, we include a factor of exp(u) in the integral
-    expu_or_1 = df.exp(u) if log_representation else 1.0
-    # Standard part
-    u_part = (u * tr2p1 - trp1**2.0 * u_old + tr**2.0 * u_old1) / trp1
-    time_derivative = 2.0 * df.pi * (expu_or_1 * u_part * v / dt) * r * dx
-    # Source terms
-    source = 2.0 * df.pi * v * f * r * dx
-    # Diffusion terms
-    diffusion = 0.0
-    if equation_type == "diffusion-reaction":
-        expu_or_u = df.exp(u) if log_representation else u
-        diffusion = 2.0 * df.pi * df.dot(-df.grad(D * expu_or_u), df.grad(v)) * r * dx
-    if equation_type == "drift-diffusion-reaction":
-        diffusion = 2.0 * df.pi * df.dot(Gamma, df.grad(v)) * r * dx
+    if is_theta_scheme:
+        # Standard part
+        u_part = (u - u_old)  
+
+        # If logarithmic, we include a factor of exp(u) in the integral
+        expu_or_1 = df.exp(u) if log_representation else 1.0
+        
+        time_derivative = 2.0 * df.pi * (expu_or_1 * u_part * v / dt) * r * dx
+
+        # Diffusion terms
+        diffusion_new = 0.0
+        diffusion_old = 0.0
+
+        if equation_type == "diffusion-reaction":
+            expu_or_u = df.exp(u) if log_representation else u
+            expu_or_uold = df.exp(u_old) if log_representation else u_old
+            diffusion_new = 2.0 * df.pi * df.dot(-df.grad(D * expu_or_u), df.grad(v)) * r * dx
+            diffusion_old = 2.0 * df.pi * df.dot(-df.grad(D * expu_or_uold), df.grad(v)) * r * dx
+
+        if equation_type == "drift-diffusion-reaction":
+            if w is not None and D is not None:
+                diffusion_new = -exp(u) * 2.0 * df.pi * df.dot(D*grad(u) + w*exp(u), df.grad(v)) * r * dx
+                diffusion_old = 2.0 * df.pi * df.dot(-exp(u_old)*D*grad(u_old) + w*exp(u_old), df.grad(v)) * r * dx
+            else:
+                diffusion_new = 2.0 * df.pi * df.dot(Gamma, df.grad(v)) * r * dx
+                diffusion_old = 2.0 * df.pi * df.dot(Gamma_old, df.grad(v)) * r * dx
+        
+        diffusion = theta * diffusion_new + (1 - theta) * diffusion_old
+
+    else:
+        tr = dt / dt_old
+        trp1 = 1.0 + tr
+        tr2p1 = 1.0 + 2.0 * tr
+        # If logarithmic, we include a factor of exp(u) in the integral
+        expu_or_1 = df.exp(u) if log_representation else 1.0
+        # Standard part
+        u_part = (u * tr2p1 - trp1**2.0 * u_old + tr**2.0 * u_old1) / trp1
+        time_derivative = 2.0 * df.pi * (expu_or_1 * u_part * v / dt) * r * dx
+        # Source terms
+        source = 2.0 * df.pi * v * f * r * dx
+        # Diffusion terms
+        diffusion = 0.0
+        if equation_type == "diffusion-reaction":
+            expu_or_u = df.exp(u) if log_representation else u
+            diffusion = 2.0 * df.pi * df.dot(-df.grad(D * expu_or_u), df.grad(v)) * r * dx
+        if equation_type == "drift-diffusion-reaction":
+            diffusion = 2.0 * df.pi * df.dot(Gamma, df.grad(v)) * r * dx
 
     # Source terms
     source = 2.0 * df.pi * v * f * r * dx
@@ -409,6 +448,9 @@ def weak_form_supg_balance_equation(
     Gamma: df.Function,  # obtain by indexing result of df.Function_definition
     r: float = 0.5 / df.pi,
     D: Optional[df.Function] = None,  # get by indexing result of df.Function_definition
+    is_theta_scheme: bool = False,
+    theta: Optional[float] = 0.5,
+    Gamma_old: Optional[df.Function] = None,  # obtain by indexing result of df.Function_definition
 ) -> df.Form:
     """
     Returns the SUPG stabilisation term form of the particle balance equations.
@@ -491,20 +533,39 @@ def weak_form_supg_balance_equation(
             "is diffusion-reaction, must also supply the diffusion coefficient 'D'."
         )
 
-    # tr = timestep_ratio
-    tr = dt / dt_old
-    trp1 = 1.0 + tr
-    tr2p1 = 1.0 + 2.0 * tr
-    # Standard part
-    u_part = (u * tr2p1 - trp1**2.0 * u_old + tr**2.0 * u_old1) / trp1
+    if is_theta_scheme:
+        # Standard part
+        u_part = (u - u_old)  
 
-    # Diffusion terms
-    diffusion = 0.0
+        # Diffusion terms
+        diffusion_new = 0.0
+        diffusion_old = 0.0
 
-    if equation_type == "diffusion-reaction":
-        diffusion = 2.0 * df.pi * df.div(df.grad(D * u)) * tauwgradv * r * dx
-    if equation_type == "drift-diffusion-reaction":
-        diffusion = - 2.0 * df.pi * df.div(Gamma) * tauwgradv * r * dx
+        if equation_type == "diffusion-reaction":
+            diffusion_new = 2.0 * df.pi * df.div(df.grad(D * u)) * tauwgradv * r * dx
+            diffusion_old = 2.0 * df.pi * df.div(df.grad(D * u_old)) * tauwgradv * r * dx
+
+        if equation_type == "drift-diffusion-reaction":
+            diffusion_new = - 2.0 * df.pi * df.div(Gamma) * tauwgradv * r * dx
+            diffusion_old = - 2.0 * df.pi * df.div(Gamma_old) * tauwgradv * r * dx
+        
+        diffusion = theta * diffusion_new + (1 - theta) * diffusion_old
+
+    else:
+        # tr = timestep_ratio
+        tr = dt / dt_old
+        trp1 = 1.0 + tr
+        tr2p1 = 1.0 + 2.0 * tr
+        # Standard part
+        u_part = (u * tr2p1 - trp1**2.0 * u_old + tr**2.0 * u_old1) / trp1
+
+        # Diffusion terms
+        diffusion = 0.0
+
+        if equation_type == "diffusion-reaction":
+            diffusion = 2.0 * df.pi * df.div(df.grad(D * u)) * tauwgradv * r * dx
+        if equation_type == "drift-diffusion-reaction":
+            diffusion = - 2.0 * df.pi * df.div(Gamma) * tauwgradv * r * dx
     
     time_derivative = 2.0 * df.pi * (u_part * tauwgradv / dt) * r * dx
 
@@ -514,6 +575,169 @@ def weak_form_supg_balance_equation(
     # Return with integral bits
     return time_derivative - diffusion - source
 
+def weak_form_taylor_balance_equation(
+    equation_type: str,
+    dt: df.Expression,
+    #dt_old: df.Expression,
+    dx: df.Measure,  # Can use built-in dolfin.dx here
+    u: Any,  # obtain by indexing result of df.TrialFunction
+    u_old: Any,
+    v: Any,  # obtain by indexing result of df.TestFunctions
+    f: df.Function,  # obtain by indexing result of df.Function_definition
+    muE: df.Function,  # obtain by indexing result of df.Function_definition
+    Gamma: df.Function,  # obtain by indexing result of df.Function_definition
+    #u_old1: Any = None,
+    f_old: df.Function = None,  # obtain by indexing result of df.Function_definition
+    #f_old1: df.Function = None,  # obtain by indexing result of df.Function_definition
+    r: float = 0.5 / df.pi,
+    D: Optional[df.Function] = None,  # get by indexing result of df.Function_definition
+    theta: Optional[float] = 0.5,
+    Gamma_old: Optional[df.Function] = None,  # obtain by indexing result of df.Function_definition
+    L_star: Optional[df.Function] = None,  # obtain by indexing result of df.Function_definition
+) -> df.Form:
+    """
+    Returns the weak form of the particle balance equations.
+
+    If log_representation is True, solves:
+
+    2.0 * pi * exp(u) * (
+        (
+            (1.0 + 2.0 * dt / dt_old) / (1.0 + dt / dt_old)
+        )*(
+            u - u_old * pow(1.0 + dt / dt_old, 2.0) / (1.0 + 2.0 * dt / dt_old)
+              + u_old1 * pow(dt / dt_old, 2.0) / (1.0 + 2.0 * dt / dt_old)
+        )
+    ) * (v/dt) * r * dx
+
+    Otherwise, solves:
+
+    2.0 * pi * (
+        (
+            (1.0 + 2.0 * dt / dt_old) / (1.0 + dt / dt_old)
+        )*(
+            u - u_old * pow(1.0 + dt / dt_old, 2.0) / (1.0 + 2.0 * dt / dt_old)
+              + u_old1 * pow(dt / dt_old, 2.0) / (1.0 + 2.0 * dt / dt_old)
+        )
+    ) * (v/dt) * r * dx
+
+    If solving diffusion-reaction equation, also includes the term:
+
+    -2.0 * pi * dot(-grad(D * exp(u)), grad(v)) * r * dx     (log representation)
+    -2.0 * pi * dot(-grad(D * u), grad(v)) * r * dx          (standard)
+
+    If solving drift-diffusion-reaction, instead includes the term:
+
+    -2.0 * pi * dot(Gamma, grad(v)) * r * dx
+
+    In all cases, also includes the source term:
+
+    - 2.0 * pi * f * v * r * dx
+
+    Parameters
+    ----------
+    equation_type : str
+        Type of equation to solve. Options are 'reaction', 'diffusion-reaction', or
+        'drift-diffusion-reaction'.
+    dt : df.Expression
+        Current time-step size
+    dt_old : df.Expression
+        Previous time-step size
+    dx : df.Measure
+        dV, used to build integrals. Recommended to use dolfin.dx.
+    u
+        Trial function
+    u_old
+        Value of variable in current time step
+    u_old1
+        Value of variable in previous time step
+    tauwgradv
+        Test function
+    f : df.Function
+        Source term
+    Gamma : df.Function
+        particle flux
+    r : float, default 0.5 / pi
+        r coordinate
+    D : df.Function, default None
+        diffusion coefficient, only required for the diffusion equation.
+    log_representation : bool, default False
+        Use logarithmic representation.
+
+    Returns
+    -------
+    df.Form
+
+    Raises
+    ------
+    ValueError
+        If equation_type is not recognised, or if D is not supplied when solving the
+        diffusion-reaction equation.
+    """
+    equation_types = ["reaction", "diffusion-reaction", "drift-diffusion-reaction"]
+    if equation_type not in equation_types:
+        err_msg = dedent(
+            f"""\
+            fedm.weak_form_balance_equation_log_representation: The equation type
+            {equation_type}' is not recognised. Must be one of
+            {comma_separated(equation_types)}.
+            """
+        )
+        raise ValueError(err_msg.rstrip().replace("\n", " "))
+
+    if equation_type == "diffusion-reaction" and D is None:
+        raise ValueError(
+            "fedm.weak_form_balance_equation_log_representation: When 'equation_type' "
+            "is diffusion-reaction, must also supply the diffusion coefficient 'D'."
+        )
+
+
+    # Source terms
+    source_time_derivative = 0.0
+
+    # Standard part
+    u_part = (u - u_old)    
+
+    # Diffusion terms
+    diffusion_new = 0.0
+    diffusion_old = 0.0
+
+    # if equation_type == "diffusion-reaction":
+    #     diffusion = 2.0 * df.pi * df.dot(-df.grad(D * u), df.grad(v)) * r * dx
+
+    if equation_type == "drift-diffusion-reaction":
+        diffusion_new = 2.0 * df.pi * df.dot(Gamma, df.grad(v)) * r * dx
+        #diffusion_old = 2.0 * df.pi * df.dot(Gamma_old, df.grad(v)) * r * dx
+
+    diffusion = theta * diffusion_new + (1 - theta) * diffusion_old
+
+    # Source time derivative
+    if f_old is not None:
+        s_part = (f - f_old)  
+        source_time_derivative = 2.0 * df.pi * ( s_part * v / dt) * r * dx
+    else:
+        source_time_derivative = 0.
+
+    # Diffusion terms
+    TG_correction_new = 0.0
+    TG_correction_old = 0.0
+
+    if equation_type == "drift-diffusion-reaction":
+        abs_muE = 2 * df.sqrt(df.inner(muE, muE))
+        if L_star is None:
+            L_star = ( - df.div( D * df.grad(v) ) - df.dot(muE, df.grad(v)) )
+        
+        TG_correction_new = - (dt / abs_muE) * 2.0 * df.pi  * ( df.div(Gamma) - f ) * L_star * r * dx
+        if Gamma_old is not None and f_old is not None:
+            TG_correction_old = - (dt / abs_muE) * 2.0 * df.pi  * ( df.div(Gamma_old) - f_old ) * L_star * r * dx
+        elif Gamma_old is not None:
+            TG_correction_old = - (dt / abs_muE) * 2.0 * df.pi  * ( df.div(Gamma_old) ) * L_star * r * dx
+    
+    TG_correction = theta * TG_correction_new + (1 - theta) * TG_correction_old
+
+    time_derivative = 2.0 * df.pi * (u_part * v / dt) * r * dx
+
+    # Return with integral bits
+    return time_derivative - diffusion + TG_correction - source_time_derivative
 
 def weak_form_balance_equation_log_representation(*args, **kwargs) -> df.Form:
     """
